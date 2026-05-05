@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portal | RoofSafe Pro</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark">R</span><span>RoofSafe <strong>Pro</strong></span></a>
+    <div class="header-actions">
+      <button class="button button-ghost button-small" id="logoutBtn" hidden>Log out</button>
+    </div>
+  </header>
+
+  <main class="portal-shell">
+    <section class="form-card" id="loginCard">
+      <div class="form-panel">
+        <h1>Log in to your portal.</h1>
+        <p class="section-lede">Download your IIPP, check subscription status, and review delivery history.</p>
+        <p id="loginError" class="error"></p>
+        <form id="loginForm" class="field-grid">
+          <div class="field field-full">
+            <label for="loginEmail">Email</label>
+            <input id="loginEmail" type="email" required autocomplete="email" />
+          </div>
+          <div class="field field-full">
+            <label for="loginPassword">Password</label>
+            <input id="loginPassword" type="password" required autocomplete="current-password" />
+          </div>
+          <div class="field field-full">
+            <button class="button button-large" id="loginBtn" type="submit">Log in</button>
+          </div>
+        </form>
+      </div>
+      <aside class="order-panel">
+        <h2>Need an account?</h2>
+        <p>Start checkout to create your custom IIPP and activate toolbox talk delivery.</p>
+        <a class="button button-large" href="/signup.html">Get started</a>
+      </aside>
+    </section>
+
+    <section class="portal-card" id="portalCard" hidden>
+      <div id="statusBanner" class="status-banner"></div>
+      <div class="split-section" style="padding: 34px 0 0;">
+        <div>
+          <h1 id="companyName">Your company</h1>
+          <p class="section-lede" id="companyDetails"></p>
+          <div class="hero-actions">
+            <button class="button button-large" id="downloadBtn">Download IIPP</button>
+            <a class="button button-ghost" id="resumeCheckout" href="/signup.html" hidden>Resume checkout</a>
+          </div>
+        </div>
+        <div class="feature-list" id="statsList"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API = '';
+    let token = localStorage.getItem('rsp_token');
+    let contractor = null;
+
+    const loginCard = document.getElementById('loginCard');
+    const portalCard = document.getElementById('portalCard');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginError = document.getElementById('loginError');
+
+    if (token) loadPortal();
+
+    document.getElementById('loginForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      loginError.classList.remove('is-visible');
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.textContent = 'Logging in...';
+
+      try {
+        const res = await fetch(API + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('loginEmail').value,
+            password: document.getElementById('loginPassword').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        token = data.token;
+        localStorage.setItem('rsp_token', token);
+        await loadPortal();
+      } catch (err) {
+        loginError.textContent = err.message;
+        loginError.classList.add('is-visible');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Log in';
+      }
+    });
+
+    logoutBtn.addEventListener('click', () => {
+      localStorage.removeItem('rsp_token');
+      window.location.reload();
+    });
+
+    document.getElementById('downloadBtn').addEventListener('click', async () => {
+      if (!contractor?.iipp_filename) {
+        alert('Your IIPP is not ready yet. Please check again shortly.');
+        return;
+      }
+      const res = await fetch(API + '/api/contractor/iipp/download', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) {
+        alert('Download failed. Please try again.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `RoofSafe_Pro_IIPP_${contractor.company_name.replace(/[^a-zA-Z0-9]/g, '_')}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    async function loadPortal() {
+      const res = await fetch(API + '/api/contractor/me', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!res.ok) {
+        localStorage.removeItem('rsp_token');
+        token = null;
+        return;
+      }
+      contractor = await res.json();
+      renderPortal();
+    }
+
+    function renderPortal() {
+      loginCard.hidden = true;
+      portalCard.hidden = false;
+      logoutBtn.hidden = false;
+      document.getElementById('companyName').textContent = contractor.company_name;
+      document.getElementById('companyDetails').textContent = [contractor.address, contractor.city_state_zip, contractor.cslb_license ? `CSLB ${contractor.cslb_license}` : ''].filter(Boolean).join(' | ');
+
+      const banner = document.getElementById('statusBanner');
+      const resume = document.getElementById('resumeCheckout');
+      if (contractor.status === 'active') {
+        banner.textContent = `Subscription active. Payment status: ${contractor.payment_status || 'confirmed'}.`;
+        resume.hidden = true;
+      } else {
+        banner.textContent = 'Payment pending. Complete checkout to activate your documents.';
+        resume.href = `/signup.html?step=2&contractor_id=${contractor.id}`;
+        resume.hidden = false;
+      }
+
+      const stats = contractor.stats || {};
+      document.getElementById('statsList').innerHTML = [
+        ['Topics received', stats.topics_received || 0],
+        ['Total topics', stats.total_topics || 30],
+        ['IIPP status', contractor.iipp_filename ? 'Ready' : 'Pending'],
+        ['Next delivery', stats.next_delivery_date ? new Date(stats.next_delivery_date).toLocaleDateString() : 'After activation'],
+      ].map(([label, value]) => `<div class="feature-row"><span></span>${label}: <strong>${value}</strong></div>`).join('');
+    }
+  </script>
+</body>
+</html>

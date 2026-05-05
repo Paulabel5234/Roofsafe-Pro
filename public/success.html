@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Received | RoofSafe Pro</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark">R</span><span>RoofSafe <strong>Pro</strong></span></a>
+  </header>
+
+  <main class="success-shell">
+    <section class="success-card">
+      <div id="loadingState">
+        <h1>Confirming your subscription.</h1>
+        <p class="section-lede">We received the checkout return from Stripe and are waiting for payment confirmation.</p>
+        <div class="status-banner">Preparing your account...</div>
+      </div>
+
+      <div id="activeState" hidden>
+        <h1>You are all set.</h1>
+        <p class="section-lede">Your subscription is active and your custom IIPP is ready or being finalized.</p>
+        <div class="status-banner">Payment confirmed. Welcome to RoofSafe Pro.</div>
+        <div class="hero-actions" style="margin-top: 24px;">
+          <a class="button button-large" href="/portal.html">Go to your portal</a>
+          <a class="button button-ghost" href="/">Back to home</a>
+        </div>
+      </div>
+
+      <div id="pendingState" hidden>
+        <h1>Almost there.</h1>
+        <p class="section-lede">Stripe has not finished confirming the subscription yet. This usually resolves in under a minute.</p>
+        <div class="hero-actions">
+          <a class="button button-large" href="/portal.html">Check your portal</a>
+          <a class="button button-ghost" id="retryBtn" href="#">Check again</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const contractorId = params.get('contractor_id');
+    const loading = document.getElementById('loadingState');
+    const active = document.getElementById('activeState');
+    const pending = document.getElementById('pendingState');
+    let attempts = 0;
+
+    document.getElementById('retryBtn').addEventListener('click', (event) => {
+      event.preventDefault();
+      attempts = 0;
+      show('loading');
+      checkStatus();
+    });
+
+    function show(state) {
+      loading.hidden = state !== 'loading';
+      active.hidden = state !== 'active';
+      pending.hidden = state !== 'pending';
+    }
+
+    async function checkStatus() {
+      if (!contractorId) {
+        show('pending');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/payment/verify/${contractorId}`);
+        const data = await res.json();
+        if (data.status === 'active') {
+          show('active');
+          return;
+        }
+      } catch (err) {}
+
+      attempts += 1;
+      if (attempts < 10) {
+        setTimeout(checkStatus, 3000);
+      } else {
+        show('pending');
+      }
+    }
+
+    checkStatus();
+  </script>
+</body>
+</html>
