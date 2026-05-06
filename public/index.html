@@ -1122,6 +1122,10 @@
         </div>
 
         <form class="lead-form" id="leadForm" novalidate>
+          <div aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;">
+            <label for="lead-website">Website (leave blank)</label>
+            <input id="lead-website" type="text" name="website" tabindex="-1" autocomplete="off" />
+          </div>
           <div class="field">
             <label for="lead-name">First name</label>
             <input id="lead-name" type="text" autocomplete="given-name" placeholder="Your first name" required />
@@ -1142,7 +1146,8 @@
               <option value="other">Other</option>
             </select>
           </div>
-          <button class="button button-large" type="submit">Send me the 3 talks</button>
+          <p class="lead-error" id="leadError" role="alert" style="display:none;margin:0 0 12px;padding:10px 12px;border-radius:6px;background:#7f1d1d;color:#fff;font-size:13px;font-weight:700;"></p>
+          <button class="button button-large" type="submit" id="leadSubmit">Send me the 3 talks</button>
           <p class="privacy-note">No spam. We may email you when relevant Cal/OSHA changes land. Unsubscribe anytime.</p>
         </form>
 
@@ -1208,18 +1213,73 @@
   </footer>
 
   <script>
-    // Lead-magnet form — frontend-only demo until the /api/lead-capture backend lands
+    // Lead-magnet form — submits to /api/lead-capture, which saves the lead and triggers an email.
     (function () {
       var form = document.getElementById('leadForm');
       var card = document.getElementById('leadCard');
       if (!form || !card) return;
-      form.addEventListener('submit', function (e) {
+
+      var submitBtn = document.getElementById('leadSubmit');
+      var errorEl = document.getElementById('leadError');
+
+      function showError(message) {
+        if (!errorEl) return;
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+      }
+
+      function clearError() {
+        if (!errorEl) return;
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+      }
+
+      form.addEventListener('submit', async function (e) {
         e.preventDefault();
+        clearError();
+
+        var firstName = document.getElementById('lead-name').value.trim();
         var email = document.getElementById('lead-email').value.trim();
+        var company = document.getElementById('lead-company').value.trim();
         var state = document.getElementById('lead-state').value;
-        if (!email || !state) return;
-        card.classList.add('is-submitted');
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        var website = document.getElementById('lead-website').value.trim();
+
+        if (!firstName || !email || !state) {
+          showError('Please fill in your first name, email, and state.');
+          return;
+        }
+
+        var originalLabel = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Sending...';
+
+        try {
+          var res = await fetch('/api/lead-capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              first_name: firstName,
+              email: email,
+              company: company,
+              state: state,
+              website: website,
+            }),
+          });
+
+          var data = {};
+          try { data = await res.json(); } catch (_) { /* tolerate empty body */ }
+
+          if (!res.ok) {
+            throw new Error(data.error || 'Something went wrong. Please try again.');
+          }
+
+          card.classList.add('is-submitted');
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (err) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = originalLabel;
+          showError(err.message || 'Something went wrong. Please try again.');
+        }
       });
     })();
   </script>

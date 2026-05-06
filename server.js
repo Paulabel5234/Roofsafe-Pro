@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Stripe = require('stripe');
 const { generateIIPP } = require('./services/documentGenerator');
+const { sendSampleTalksEmail } = require('./services/emailService');
 
 const app = express();
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -23,9 +24,11 @@ function initialStore() {
   return {
     nextContractorId: 1,
     nextDeliveryId: 1,
+    nextLeadId: 1,
     contractors: [],
     deliveries: [],
     stripeEvents: [],
+    leads: [],
   };
 }
 
@@ -74,6 +77,86 @@ app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), asyn
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.post('/api/lead-capture', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const honeypot = String(body.website || '').trim();
+    const firstName = String(body.first_name || '').trim();
+    const email = String(body.email || '').trim().toLowerCase();
+    const company = String(body.company || '').trim();
+    const state = String(body.state || '').trim();
+
+    // Honeypot: bots auto-fill the hidden "website" field. Pretend success silently.
+    if (honeypot) {
+      return res.json({ success: true });
+    }
+
+    if (!firstName || !email || !state) {
+      return res.status(400).json({ error: 'Please fill in your first name, email, and state.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'That email address looks invalid.' });
+    }
+
+    const store = readStore();
+    if (!Array.isArray(store.leads)) store.leads = [];
+    if (typeof store.nextLeadId !== 'number') store.nextLeadId = 1;
+
+    // Duplicate prevention: same email within the last hour returns success without re-sending.
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const recent = store.leads.find(
+      (l) => l.email === email && new Date(l.created_at).getTime() > oneHourAgo
+    );
+    if (recent) {
+      return res.json({ success: true });
+    }
+
+    const lead = {
+      id: store.nextLeadId++,
+      first_name: firstName.slice(0, 80),
+      email: email.slice(0, 200),
+      company: company.slice(0, 200),
+      state: state.slice(0, 20),
+      source: 'lead-magnet-sample-talks',
+      ip: req.ip,
+      user_agent: String(req.headers['user-agent'] || '').slice(0, 300),
+      created_at: new Date().toISOString(),
+      email_sent: false,
+      email_sent_at: null,
+      email_error: null,
+    };
+    store.leads.push(lead);
+    writeStore(store);
+
+    // Send the email best-effort. The lead is saved either way so we can retry later.
+    sendSampleTalksEmail(lead)
+      .then((result) => {
+        if (!result.sent) return;
+        const updated = readStore();
+        const found = updated.leads.find((l) => l.id === lead.id);
+        if (found) {
+          found.email_sent = true;
+          found.email_sent_at = new Date().toISOString();
+          writeStore(updated);
+        }
+      })
+      .catch((emailErr) => {
+        console.error('[lead-capture] email send failed:', emailErr.message);
+        const updated = readStore();
+        const found = updated.leads.find((l) => l.id === lead.id);
+        if (found) {
+          found.email_error = String(emailErr.message).slice(0, 500);
+          writeStore(updated);
+        }
+      });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[lead-capture] unexpected error:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again or email support@roofsafepro.com.' });
+  }
+});
 
 app.post('/api/signup/register', async (req, res) => {
   const required = ['email', 'password', 'company_name', 'address', 'city_state_zip', 'phone', 'iipp_admin'];
